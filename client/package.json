@@ -1,0 +1,12 @@
+{
+  "name": "watchparty-client",
+  "version": "1.0.0",
+  "description": "Watch Party Client - Frontend for video chat and screen sharing",
+  "keywords": ["watch-party", "webrtc", "video-chat", "screen-sharing"],
+  "author": "",
+  "license": "MIT",
+  "scripts": {
+    "serve": "python -m http.server 8000",
+    "serve-node": "npx http-server"
+  }
+}
