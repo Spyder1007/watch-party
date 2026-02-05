@@ -357,147 +357,109 @@ class WatchPartyApp {
 
   initiatePeerConnection(peerId) {
     if (this.state.peers.has(peerId)) {
-      console.log(`Peer connection already exists with ${peerId}`);
+      console.log(`Peer already exists with ${peerId}`);
       return;
     }
 
-    console.log(`%c[INITIATOR] Starting peer connection with ${peerId}`, 'color: blue; font-weight: bold;');
+    console.log(`Initiating peer connection with ${peerId}`);
     
     // Verify local stream
     if (!this.state.localStream) {
-      console.error(`❌ LOCAL STREAM MISSING! Cannot create peer connection.`);
+      console.error(`❌ LOCAL STREAM MISSING!`);
       return;
     }
 
-    const audioTracks = this.state.localStream.getAudioTracks();
-    const videoTracks = this.state.localStream.getVideoTracks();
-    
-    console.log(`📊 Local stream verification:`, {
-      audioTracks: audioTracks.length,
-      videoTracks: videoTracks.length,
-      audioEnabled: audioTracks.length > 0 ? audioTracks[0].enabled : false,
-      videoEnabled: videoTracks.length > 0 ? videoTracks[0].enabled : false
-    });
-
     // Verify SimplePeer is available
     if (typeof SimplePeer === 'undefined') {
-      console.error('❌ SimplePeer library not loaded!');
+      console.error('❌ SimplePeer not loaded!');
       return;
     }
 
     try {
-      console.log(`🔧 Creating SimplePeer with config:`, {
-        initiator: true,
-        hasStream: !!this.state.localStream,
-        iceServers: CONFIG.ICE_SERVERS.length,
-        transportPolicy: 'all'
-      });
-
       const peer = new SimplePeer({
         initiator: true,
         stream: this.state.localStream,
-        streams: [this.state.localStream], // Some versions need this too
         config: {
-          iceServers: CONFIG.ICE_SERVERS,
-          bundlePolicy: 'max-bundle',
-          rtcpMuxPolicy: 'require'
+          iceServers: CONFIG.ICE_SERVERS
         },
         iceTransportPolicy: 'all',
         offerOptions: {
           offerToReceiveAudio: true,
           offerToReceiveVideo: true
+        },
+        answerOptions: {
+          offerToReceiveAudio: true,
+          offerToReceiveVideo: true
         }
       });
 
-      console.log(`✅ SimplePeer instance created for ${peerId}`);
+      console.log(`✅ Initiator peer created for ${peerId}`);
 
       peer.on('signal', (data) => {
-        console.log(`[${peerId}] 📤 Signal event - ${data.type} (candidate count: ${data.candidates ? data.candidates.length : 'N/A'})`);
+        console.log(`[${peerId}] Signal: ${data.type}`);
         if (this.state.ws && this.state.ws.readyState === WebSocket.OPEN) {
           this.state.ws.send(JSON.stringify({
             type: 'signal',
             to: peerId,
             signal: data
           }));
-          console.log(`[${peerId}] ✅ Signal sent via WebSocket`);
-        } else {
-          console.error(`[${peerId}] ❌ WebSocket not ready!`);
         }
       });
 
       peer.on('connect', () => {
-        console.log(`%c[${peerId}] ✅✅ PEER CONNECTED!`, 'color: green; font-weight: bold; font-size: 14px;');
+        console.log(`[${peerId}] ✅ Peer connected`);
       });
 
       peer.on('stream', (stream) => {
-        console.log(`%c[${peerId}] 📹 STREAM RECEIVED!`, 'color: green; font-weight: bold;', {
-          audioTracks: stream.getAudioTracks().length,
-          videoTracks: stream.getVideoTracks().length,
-          streamId: stream.id
+        console.log(`[${peerId}] 📹 Stream received:`, {
+          audio: stream.getAudioTracks().length,
+          video: stream.getVideoTracks().length
         });
         this.displayRemoteVideo(peerId, stream);
       });
 
       peer.on('track', (track, stream) => {
-        console.log(`[${peerId}] 🎵 Track event - ${track.kind}:`, {
-          enabled: track.enabled,
-          muted: track.muted,
-          readyState: track.readyState
-        });
-      });
-
-      peer.on('addstream', (stream) => {
-        console.log(`[${peerId}] 📡 AddStream event (legacy API)`);
-        this.displayRemoteVideo(peerId, stream);
+        console.log(`[${peerId}] Track: ${track.kind}`);
       });
 
       peer.on('error', (error) => {
-        console.error(`%c[${peerId}] ❌ ERROR`, 'color: red; font-weight: bold;', error);
+        console.error(`[${peerId}] ❌ Error:`, error.message);
       });
 
       peer.on('close', () => {
-        console.log(`[${peerId}] ❌ Peer connection closed`);
+        console.log(`[${peerId}] Peer closed`);
         this.removeRemoteVideo(peerId);
       });
 
       this.state.peers.set(peerId, peer);
-      console.log(`[${peerId}] Total peers now: ${this.state.peers.size}`);
     } catch (error) {
-      console.error('❌ Error creating peer connection:', error);
+      console.error('Error creating peer:', error);
     }
   }
 
   handleSignal(message) {
     const { from, signal } = message;
 
-    console.log(`%c[NON-INITIATOR] Received signal from ${from}: ${signal.type}`, 'color: orange; font-weight: bold;');
+    console.log(`[${from}] Received signal: ${signal.type}`);
 
-    if (!this.state.peers.has(from)) {
-      console.log(`🔧 Creating non-initiator peer for ${from}`);
+    // Check if peer exists - if so, use it directly
+    let peer = this.state.peers.get(from);
+    
+    if (!peer) {
+      console.log(`[${from}] No peer exists, creating non-initiator peer`);
       
       // Verify local stream
       if (!this.state.localStream) {
-        console.error(`❌ LOCAL STREAM MISSING when creating non-initiator peer!`);
+        console.error(`[${from}] ❌ LOCAL STREAM MISSING when creating peer!`);
         return;
       }
-
-      const audioTracks = this.state.localStream.getAudioTracks();
-      const videoTracks = this.state.localStream.getVideoTracks();
-      
-      console.log(`📊 Local stream (for non-initiator):`, {
-        audioTracks: audioTracks.length,
-        videoTracks: videoTracks.length
-      });
       
       try {
-        const peer = new SimplePeer({
+        peer = new SimplePeer({
           initiator: false,
           stream: this.state.localStream,
-          streams: [this.state.localStream],
           config: {
-            iceServers: CONFIG.ICE_SERVERS,
-            bundlePolicy: 'max-bundle',
-            rtcpMuxPolicy: 'require'
+            iceServers: CONFIG.ICE_SERVERS
           },
           iceTransportPolicy: 'all',
           offerOptions: {
@@ -510,127 +472,80 @@ class WatchPartyApp {
           }
         });
 
-        console.log(`✅ Non-initiator SimplePeer created for ${from}`);
+        console.log(`[${from}] ✅ Non-initiator peer created`);
 
         peer.on('signal', (data) => {
-          console.log(`[${from}] 📤 Signal event (non-init) - ${data.type}`);
+          console.log(`[${from}] Signal event: ${data.type}`);
           if (this.state.ws && this.state.ws.readyState === WebSocket.OPEN) {
             this.state.ws.send(JSON.stringify({
               type: 'signal',
               to: from,
               signal: data
             }));
-            console.log(`[${from}] ✅ Signal sent back to initiator`);
-          } else {
-            console.error(`[${from}] ❌ WebSocket not ready!`);
           }
         });
 
         peer.on('connect', () => {
-          console.log(`%c[${from}] ✅✅ PEER CONNECTED (non-init)!`, 'color: green; font-weight: bold; font-size: 14px;');
+          console.log(`[${from}] ✅ Peer connected`);
         });
 
         peer.on('stream', (stream) => {
-          console.log(`%c[${from}] 📹 STREAM RECEIVED (non-init)!`, 'color: green; font-weight: bold;', {
-            audioTracks: stream.getAudioTracks().length,
-            videoTracks: stream.getVideoTracks().length,
-            streamId: stream.id
+          console.log(`[${from}] 📹 Stream received:`, {
+            audio: stream.getAudioTracks().length,
+            video: stream.getVideoTracks().length
           });
           this.displayRemoteVideo(from, stream);
         });
 
         peer.on('track', (track, stream) => {
-          console.log(`[${from}] 🎵 Track (non-init) - ${track.kind}:`, {
-            enabled: track.enabled,
-            muted: track.muted,
-            readyState: track.readyState
-          });
-        });
-
-        peer.on('addstream', (stream) => {
-          console.log(`[${from}] 📡 AddStream (non-init legacy)`);
-          this.displayRemoteVideo(from, stream);
+          console.log(`[${from}] Track: ${track.kind}`);
         });
 
         peer.on('error', (error) => {
-          console.error(`%c[${from}] ❌ ERROR (non-init)`, 'color: red; font-weight: bold;', error);
+          console.error(`[${from}] ❌ Peer error:`, error.message);
         });
 
         peer.on('close', () => {
-          console.log(`[${from}] ❌ Peer closed (non-init)`);
+          console.log(`[${from}] Peer closed`);
           this.removeRemoteVideo(from);
         });
 
         this.state.peers.set(from, peer);
-        console.log(`[${from}] Non-init peer added. Total peers: ${this.state.peers.size}`);
       } catch (error) {
-        console.error(`❌ Error creating non-initiator peer:`, error);
+        console.error(`[${from}] Error creating peer:`, error);
         return;
       }
     }
 
-    // Now signal the peer with the received signal
+    // Signal the peer with the received signal
     try {
-      const peer = this.state.peers.get(from);
-      if (peer) {
-        console.log(`[${from}] 📥 Processing received ${signal.type}`);
+      // Check if peer is still valid before signaling
+      if (peer && !peer.destroyed) {
+        console.log(`[${from}] Signaling with ${signal.type}`);
         peer.signal(signal);
-        console.log(`[${from}] ✅ Signal processed`);
       } else {
-        console.error(`[${from}] ❌ Peer not found in map!`);
+        console.warn(`[${from}] Cannot signal - peer is destroyed or null`);
       }
     } catch (error) {
-      console.error(`[${from}] ❌ Error signaling peer:`, error);
+      console.error(`[${from}] Error during signal:`, error.message);
     }
   }
 
   displayRemoteVideo(peerId, stream) {
-    console.log(`%c[${peerId}] displayRemoteVideo called`, 'color: purple; font-weight: bold;');
-    
-    // Verify stream
     if (!stream) {
-      console.error(`[${peerId}] ❌ Stream is null/undefined!`);
+      console.error(`[${peerId}] Stream is null!`);
       return;
     }
 
-    const audioTracks = stream.getAudioTracks();
-    const videoTracks = stream.getVideoTracks();
-    
-    console.log(`%c[${peerId}] Stream Details:`, 'color: purple;`, {
-      streamId: stream.id,
-      audioTracks: audioTracks.length,
-      videoTracks: videoTracks.length,
-      active: stream.active
-    });
-
-    // Log each track
-    audioTracks.forEach((track, i) => {
-      console.log(`[${peerId}]   Audio track ${i}:`, {
-        enabled: track.enabled,
-        muted: track.muted,
-        readyState: track.readyState,
-        label: track.label
-      });
-    });
-
-    videoTracks.forEach((track, i) => {
-      console.log(`[${peerId}]   Video track ${i}:`, {
-        enabled: track.enabled,
-        muted: track.muted,
-        readyState: track.readyState,
-        label: track.label
-      });
-    });
-
     const videoSection = document.getElementById('videoSection');
     if (!videoSection) {
-      console.error(`[${peerId}] ❌ Video section not found!`);
+      console.error('Video section not found!');
       return;
     }
 
     // Check if video already exists
     if (document.getElementById(`remote-video-${peerId}`)) {
-      console.log(`[${peerId}] Video element already exists`);
+      console.log(`[${peerId}] Video already exists`);
       return;
     }
 
@@ -641,54 +556,21 @@ class WatchPartyApp {
     const video = document.createElement('video');
     video.autoplay = true;
     video.playsinline = true;
-    video.muted = false;  // 🔴 CRITICAL: Remote video must NOT be muted!
-    video.volume = 1.0;    // Max volume
+    video.muted = false;  // 🔴 CRITICAL: NOT muted!
+    video.volume = 1.0;
     video.srcObject = stream;
 
-    console.log(`[${peerId}] Video element created:`, {
-      muted: video.muted,
-      volume: video.volume,
-      autoplay: video.autoplay
-    });
-
-    // Add event listeners for debugging
     video.addEventListener('loadedmetadata', () => {
-      console.log(`%c[${peerId}] ✅ loadedmetadata event`, 'color: green;`);
-      video.play().catch(err => {
-        console.error(`[${peerId}] ❌ autoplay failed:`, err);
-        // Try manual play
-        setTimeout(() => {
-          video.play().catch(e => console.error(`[${peerId}] Manual play failed:`, e));
-        }, 100);
-      });
+      console.log(`[${peerId}] Video loaded, playing...`);
+      video.play().catch(err => console.error(`[${peerId}] Play error:`, err));
     });
 
     video.addEventListener('play', () => {
-      console.log(`%c[${peerId}] ✅ Video playing!`, 'color: green; font-size: 14px;');
-    });
-
-    video.addEventListener('pause', () => {
-      console.warn(`[${peerId}] ⚠️  Video paused`);
+      console.log(`[${peerId}] Video playing`);
     });
 
     video.addEventListener('error', (e) => {
-      console.error(`[${peerId}] ❌ Video error:`, e);
-    });
-
-    video.addEventListener('canplay', () => {
-      console.log(`[${peerId}] ✅ Can play`);
-    });
-
-    video.addEventListener('canplaythrough', () => {
-      console.log(`[${peerId}] ✅ Can play through`);
-    });
-
-    video.addEventListener('stalled', () => {
-      console.warn(`[${peerId}] ⚠️  Video stalled`);
-    });
-
-    video.addEventListener('waiting', () => {
-      console.warn(`[${peerId}] ⚠️  Waiting for data`);
+      console.error(`[${peerId}] Video error:`, e);
     });
 
     const label = document.createElement('div');
@@ -700,13 +582,7 @@ class WatchPartyApp {
     remoteVideoContainer.appendChild(label);
     videoSection.appendChild(remoteVideoContainer);
     
-    console.log(`%c[${peerId}] ✅ Remote video element added to DOM`, 'color: green; font-weight: bold;');
-
-    // Ensure autoplay starts
-    setTimeout(() => {
-      const allVideos = videoSection.querySelectorAll('video');
-      console.log(`[${peerId}] Found ${allVideos.length} videos in section`);
-    }, 100);
+    console.log(`[${peerId}] Video element added to DOM`);
   }
 
   removeRemoteVideo(peerId) {
